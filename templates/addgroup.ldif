@@ -1,0 +1,6 @@
+dn: cn={{ ldap_samplegroup_name }},ou={{ ldap_group_ou }},{{ ldap_suffix }}
+cn: {{ ldap_samplegroup_name }}
+objectClass: top
+objectClass: posixGroup
+gidNumber: {{ ldap_sampleuser_gidnumber }}
+memberUid: uid={{ ldap_sampleuser_name }}

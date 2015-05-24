@@ -1,0 +1,10 @@
+---
+- name: restart sshd
+  service: name={{ sshd_service }} state=restarted
+
+- name: restart nslcd
+  service: name=nslcd state=restarted
+
+- name: restart nscd
+  service: name=nscd state=restarted
+

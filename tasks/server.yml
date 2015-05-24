@@ -1,0 +1,182 @@
+---
+- name: Ensure openldap is installed.
+  yum: name={{ item }} state=installed
+  when: ansible_os_family == "RedHat"
+  with_items:
+    - openldap 
+    - openldap-servers 
+    - openldap-clients
+    - openssh-ldap
+    - pam_ldap
+
+- name: Ensure openldap is installed.
+  apt: name={{ item }} state=installed update_cache=yes cache_valid_time=86400
+  when: ansible_os_family == "Debian"
+  with_items:
+    - slapd 
+    - ldap-utils
+    - libnss-ldap
+    - libpam-ldap 
+    - nscd
+
+- name: Set OS specific varible
+  set_fact:
+    openldap_conf_dir: /etc/openldap
+    authorizedkeys_command_path: /usr/libexec/openssh/find-ldap-publickey
+    sshd_service: sshd
+  when: ansible_os_family == "RedHat"
+
+- name: Set OS specific variable
+  set_fact:
+    openldap_conf_dir: /etc/ldap
+    authorizedkeys_command_path: /usr/lib/openssh/find-ldap-publickey
+    sshd_service: ssh
+  when: ansible_os_family == "Debian"
+
+- name: Ensure ldap conf directory is present
+  file: path={{ ldap_dir }} state=directory
+
+- name: Ensure ldap conf directory is initialized
+  file: path={{ openldap_conf_dir }}/slapd.d/ state=absent
+
+- name: Ensure sample conf file is copied
+  shell: creates={{ ldap_dir }}/DB_CONFIG cp /usr/share/openldap-servers/DB_CONFIG.example {{ ldap_dir }}/DB_CONFIG
+
+- name: Ensure sample conf file is copied
+  shell: creates={{ slapd_conf_path }} cp /usr/share/openldap-servers/slapd.conf.obsolete {{ slapd_conf_path }}
+  when: ansible_distribution == "CentOS" and ansible_distribution_major_version == "6"
+
+- name: Ensure ldap directory permission is correct
+  file: path={{ ldap_dir }} owner=ldap group=ldap
+  when: ansible_os_family == "RedHat"
+
+- name: Ensure ldap directory permission is correct
+  file: path={{ ldap_dir }} owner=openldap group=openldap
+  when: ansible_os_family == "Debian"
+
+- name: Genrate ldap master password
+  shell: /usr/sbin/slappasswd -s {{ ldap_root_password }}
+  register: generated_root_password
+  ignore_errors: yes
+  changed_when: False
+
+- name: Ensure slapd.conf is set
+  template: src=templates/slapd.conf.j2 dest={{ slapd_conf_path }}
+  changed_when: False
+
+- name: Get openssh-ldap version
+  shell: rpm -qi openssh-ldap | grep "Version" | awk '{print $3}'
+  register: openssh_ldap_version
+  changed_when: False
+
+- name: Ensure openssh schema is set
+  shell: creates={{ openldap_conf_dir }}/schema/openssh.schema cp /usr/share/doc/openssh-ldap-{{ openssh_ldap_version.stdout }}/openssh-lpk-openldap.schema {{ openldap_conf_dir }}/schema/openssh.schema
+  when: ansible_os_family == "RedHat"
+
+- name: Ensure openssh schema is set
+  template: src=templates/openssh.schema.j2 dest={{ openldap_conf_dir }}/schema/openssh.schema
+  when: ansible_os_family == "Debian"
+
+- name: Ensure openssh include statement is present
+  lineinfile: dest={{ slapd_conf_path }} regexp="^include\s{{ openldap_conf_dir }}/schema/openssh.schema" line="include {{ openldap_conf_dir }}/schema/openssh.schema"
+  changed_when: False
+
+- name: Ensure openldap is started
+  service: name=slapd state=started enabled=yes
+
+- name: Ensure openldap is restarted
+  service: name=slapd state=restarted enabled=yes
+  changed_when: False
+
+- name: Genrate ldap sample user password
+  shell: creates=/tmp/adduser.ldif /usr/sbin/slappasswd -s {{ ldap_sampleuser_password }}
+  register: generated_sampleuser_password
+  ignore_errors: yes
+  changed_when: False
+
+- name: Ensure ldif file is set
+  template: src=templates/{{ item }} dest=/tmp/{{ item }}
+  with_items:
+    - addou.ldif
+    - adduser.ldif
+    - addgroup.ldif
+
+- name: list organization unit
+  shell: ldapsearch -D "{{ ldap_root_dn }}" -w {{ ldap_root_password }} -b "{{ ldap_suffix }}" "ou={{ ldap_users_ou }}"
+  register: ou_list
+  ignore_errors: yes
+  changed_when: False
+
+- name: Ensure organization unit is created
+  shell: ldapadd -D "{{ ldap_root_dn }}" -w {{ ldap_root_password }} -f /tmp/addou.ldif
+  when: ou_list.stdout.count("ou={{ ldap_users_ou }},{{ ldap_suffix }}") < 1  and ansible_os_family == "RedHat"
+
+- name: Ensure organization unit is created
+  shell: ldapadd -D "{{ ldap_root_dn }}" -w {{ ldap_root_password }} -f /tmp/addou.ldif
+  when: ou_list.stdout.count("ou={{ ldap_users_ou }},{{ ldap_suffix }}") < 1 and ansible_os_family == "Debian"
+
+- name: list users
+  shell: ldapsearch -D "{{ ldap_root_dn }}" -w {{ ldap_root_password }} -b "{{ ldap_suffix }}" "objectClass=posixAccount"
+  register: user_list
+  ignore_errors: yes
+  changed_when: False
+
+- name: Ensure user is created
+  shell: ldapadd -D "{{ ldap_root_dn }}" -w {{ ldap_root_password }} -f /tmp/adduser.ldif
+  when: user_list.stdout.count("uid={{ ldap_sampleuser_name }},ou={{ ldap_users_ou }},{{ ldap_suffix }}") < 1 and ansible_os_family == "RedHat"
+
+- name: Ensure user is created
+  shell: ldapadd -D "{{ ldap_root_dn }}" -w {{ ldap_root_password }} -f /tmp/adduser.ldif
+  when: user_list.stdout.count("uid={{ ldap_sampleuser_name }},ou={{ ldap_users_ou }},{{ ldap_suffix }}") < 1 and ansible_os_family == "Debian"
+
+- name: list groups
+  shell: ldapsearch -D "{{ ldap_root_dn }}" -w {{ ldap_root_password }} -b "{{ ldap_suffix }}" "cn={{ ldap_samplegroup_name }}"
+  register: group_list
+  ignore_errors: yes
+  changed_when: False
+
+- name: Ensure group is created
+  shell: ldapadd -D "{{ ldap_root_dn }}" -w {{ ldap_root_password }} -f /tmp/addgroup.ldif
+  when: group_list.stdout.count("cn={{ ldap_samplegroup_name }},ou={{ ldap_group_ou }},{{ ldap_suffix }}") < 1 and ansible_os_family == "RedHat"
+
+- name: Ensure group is created
+  shell: ldapadd -D "{{ ldap_root_dn }}" -w {{ ldap_root_password }} -f /tmp/addgroup.ldif
+  when: group_list.stdout.count("cn={{ ldap_samplegroup_name }},ou={{ ldap_group_ou }},{{ ldap_suffix }}") < 1 and ansible_os_family == "Debian"
+
+- name: list organization unit
+  shell: ldapsearch -D "{{ ldap_root_dn }}" -w {{ ldap_root_password }} -b "{{ ldap_suffix }}" "objectClass=organizationalUnit"
+  register: ou_list
+  ignore_errors: yes
+  changed_when: False
+
+- name: Ensure nslcd cond is correct
+  lineinfile: dest=/etc/nslcd.conf regexp="^{{ item }}" line="{{ item }}"
+  with_items:
+    - "tls_cacertdir {{ openldap_conf_dir }}/cacerts"
+    - "tls_reqcert allow"
+    - "tls_cacertdir {{ openldap_conf_dir }}/certs"
+  when: ldap_server_scheme == "ldaps"
+  notify: restart nslcd
+
+- name: Ensure Authorized keys command is set
+  template: src=templates/find-ldap-publickey.j2 dest={{ authorizedkeys_command_path }} mode=0755
+  notify: restart sshd
+
+- name: Ensure Authorized keys command config is set
+  lineinfile: dest=/etc/ssh/sshd_config regexp="^AuthorizedKeysCommand\s{{ authorizedkeys_command_path }}" line="AuthorizedKeysCommand {{ authorizedkeys_command_path }}"
+  notify: restart sshd
+
+- name: Ensure Authorized keys command user is set
+  lineinfile: dest=/etc/ssh/sshd_config regexp="^AuthorizedKeysCommandRunAs\sroot" line="AuthorizedKeysCommandRunAs root"  validate='sshd -t -f %s'
+  notify: restart sshd
+  when: ansible_os_family == "RedHat" and ansible_distribution_major_version == "6"
+
+- name: Ensure Authorized keys command user is set
+  lineinfile: dest=/etc/ssh/sshd_config regexp="^AuthorizedKeysCommandUser\sroot" line="AuthorizedKeysCommandUser root"  validate='sshd -t -f %s'
+  notify: restart sshd
+  when: ansible_os_family == "RedHat" and ansible_distribution_major_version == "7"
+
+- name: Ensure Authorized keys command user is set
+  lineinfile: dest=/etc/ssh/sshd_config regexp="^AuthorizedKeysCommandUser\sroot" line="AuthorizedKeysCommandUser root"  validate='sshd -t -f %s'
+  notify: restart sshd
+  when: ansible_os_family == "Debian" 

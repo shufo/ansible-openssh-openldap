@@ -1,0 +1,9 @@
+#!/bin/bash
+
+uri="{{ ldap_server_uri }}"
+binddn="{{ ldap_root_dn }}"
+bindpw="{{ ldap_root_password }}"
+base="{{ ldap_suffix }}"
+uid=$1
+
+/usr/bin/ldapsearch -LLL -H ${uri} -w "${bindpw}" -D "${binddn}" -b "${base}" "(& (objectClass=ldapPublicKey) (uid=${uid}))" "sshPublicKey" | tail -n +2 | sed -e "s/sshPublicKey\: //g" | sed -e 's/^[ ]*//g' | awk '{printf $0}'

@@ -1,0 +1,32 @@
+#!/usr/bin/expect
+
+spawn dpkg-reconfigure ldap-auth-config -freadline
+expect "Should debconf manage LDAP configuration?"
+send "yes\r"
+
+expect "LDAP server Uniform Resource Identifier:"
+send "{{ ldap_server_uri }}\r"
+
+expect "Distinguished name of the search base:"
+send "{{ ldap_suffix }}\r"
+
+expect "LDAP version to use:"
+send "1\r"
+
+expect "Make local root Database admin:"
+send "yes\r"
+
+expect "Does the LDAP database require login?"
+send "no\r"
+
+expect "LDAP account for root:"
+send "{{ ldap_root_dn }}\r"
+
+expect "LDAP root account password:"
+send "{{ ldap_root_password }}\r"
+
+expect "Local crypt to use when changing passwords:"
+send "6\r"
+
+# done
+expect eof
